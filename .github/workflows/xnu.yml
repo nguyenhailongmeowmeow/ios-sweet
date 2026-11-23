@@ -35,7 +35,7 @@ env:
 jobs:
   build:
     # Check Xcode's iig compatibility with xnu-8796 when updating this runner.
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
