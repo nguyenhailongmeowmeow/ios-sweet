@@ -51,7 +51,7 @@ diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
 -	sweet_early_disable();
 +#if defined(SWEET)
 +	/* The final TTBR1 is live; leave the outgoing VA=PA framebuffer alias. */
-+	sweet_early_relocate(SWEET_EARLY_FB_VA + 0x01200000);
++	sweet_early_disable();
 +#endif
  	set_mmu_ttb(invalid_ttep & TTBR_BADDR_MASK);
  
@@ -100,7 +100,7 @@ diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
  #include <stdint.h>
  #include <kern/misc_protos.h>
  
--#define EARLY_FB ((volatile uint32_t *)(uintptr_t)0x9c000000)
+-#define EARLY_FB ((volatile uint32_t *)(uintptr_t)0x9d200000)
 +static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9d200000;
 +#define EARLY_FB early_fb
  #define EARLY_WIDTH 1440u

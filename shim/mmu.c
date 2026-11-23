@@ -13,6 +13,7 @@
  */
 #include <stdint.h>
 #include "mmu.h"
+#include "console.h"
 
 #define PG_SHIFT	14
 #define PG_SIZE		(1UL << PG_SHIFT)		/* 16K */
@@ -90,7 +91,10 @@ int mmu_enable(struct mmu_info *info)
 	zero_table(l2);
 	for (uint64_t i = 0; i < (8UL << 30) >> BLK_SHIFT; i++)
 		l2[i] = (i << BLK_SHIFT) | DEV_FLAGS | D_BLOCK;
-	l2[FB_PHYS >> BLK_SHIFT] = (FB_PHYS & ~(BLK_SIZE - 1)) | NC_FLAGS | D_BLOCK;
+	const uint64_t fb_first = FB_BASE >> BLK_SHIFT;
+	const uint64_t fb_last = (FB_BASE + FB_STRIDE * FB_H - 1) >> BLK_SHIFT;
+	for (uint64_t blk = fb_first; blk <= fb_last; blk++)
+		l2[blk] = (blk << BLK_SHIFT) | NC_FLAGS | D_BLOCK;
 
 	/* L3 for each block that holds part of the image */
 	for (uint64_t blk = img_lo >> BLK_SHIFT; blk <= (img_hi - 1) >> BLK_SHIFT; blk++) {
@@ -99,7 +103,8 @@ int mmu_enable(struct mmu_info *info)
 		for (int i = 0; i < NENT; i++) {
 			uint64_t pa = base + ((uint64_t)i << PG_SHIFT);
 			int ours = pa >= img_lo && pa < img_hi;
-			l3[i] = pa | (ours ? WB_FLAGS : DEV_FLAGS) | D_PAGE;
+			int framebuffer = pa >= FB_BASE && pa < FB_BASE + FB_STRIDE * FB_H;
+			l3[i] = pa | (ours ? WB_FLAGS : (framebuffer ? NC_FLAGS : DEV_FLAGS)) | D_PAGE;
 		}
 		l2[blk] = (uintptr_t)l3 | D_TABLE;
 	}
