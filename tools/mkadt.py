@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Build the minimal Apple Device Tree that the SWEET xnu needs to boot.
+"""Build the minimal Apple Device Tree that the SWEET-derived xnu needs to boot.
 
-Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem]
+Only what the early boot path actually reads (see NOTES.md). Hardware values
+come from a named, reviewed profile. Usage:
+  mkadt.py OUT.adt [--device sweet|lg-g8] [--dump] [--qemu] [--highmem]
 """
-import hashlib, os, struct, sys
+import argparse, hashlib, os, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adt  # noqa: E402
@@ -41,6 +42,40 @@ QEMU_VTIMER_INTID = 27
 
 BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 
+PROFILES = {
+    'sweet': {
+        'phys_base': PHYS_BASE, 'mem_size': MEM_SIZE,
+        'high_phys_base': HIGH_PHYS_BASE, 'high_mem_size': HIGH_MEM_SIZE,
+        'gicd': GICD, 'gicd_size': GICD_SIZE,
+        'gicr': GICR, 'gicr_size': GICR_SIZE,
+        'fb': FB, 'fb_size': FB_SIZE, 'fb_w': FB_W, 'fb_h': FB_H,
+        'fb_stride': FB_STRIDE, 'ufs': UFS, 'ufs_size': UFS_SIZE,
+        'timebase': TIMEBASE, 'vtimer_intid': VTIMER_INTID,
+        'cpu_compat': 'qcom,kryo470',
+        'cpu_clocks': [1804800000] * 6 + [2304000000] * 2,
+        'memory_frequency': 1866000000, 'bus_frequency': 100000000,
+        'platform_compat': 'xiaomi,sweet', 'soc_compat': 'qcom,sm7150',
+        'firmware': 'sweet-shim', 'ecid': SWEET_ECID,
+    },
+    'lg-g8': {
+        # LG G8 ThinQ LM-G820 (alphaplus/alphalm), checked against its live FDT
+        # and Project Aloha's lg-alpha platform memory map.
+        'phys_base': 0xc4000000, 'mem_size': 0x7c000000,
+        'high_phys_base': 0x140000000, 'high_mem_size': 0x40000000,
+        'gicd': 0x17a00000, 'gicd_size': 0x10000,
+        'gicr': 0x17a60000, 'gicr_size': 0x100000,
+        'fb': 0x9d200000, 'fb_size': 0x01200000,
+        'fb_w': 1440, 'fb_h': 3120, 'fb_stride': 1440 * 4,
+        'ufs': 0x01d84000, 'ufs_size': 0x3000,
+        'timebase': 19200000, 'vtimer_intid': 19,
+        'cpu_compat': 'qcom,kryo485',
+        'cpu_clocks': [1785600000] * 4 + [2419200000] * 3 + [2841600000],
+        'memory_frequency': 2133000000, 'bus_frequency': 100000000,
+        'platform_compat': 'lge,alphaplus', 'soc_compat': 'qcom,sm8150',
+        'firmware': 'alphaplus-shim', 'ecid': 0x4c47473800000001,
+    },
+}
+
 # The iOS userland is the iPhone X (iPhone10,3 / D22AP) IPSW. MobileGestalt
 # derives product type, device class, home-button-less UI, artwork etc. from
 # the root identity and /product of the real D22AP device tree. That tree is
@@ -74,13 +109,18 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False):
+def build(seed=None, qemu=False, highmem=False, device='sweet'):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
-    phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
+    if device not in PROFILES:
+        raise ValueError(f'unknown device profile: {device}')
+    p = PROFILES[device]
+    phys_base, mem_size = ((p['high_phys_base'], p['high_mem_size']) if highmem
+                           else (p['phys_base'], p['mem_size']))
     # Carve the panic log off the top so the kernel never allocates over it.
     panic_base = phys_base + mem_size - PANIC_LOG_SIZE
     mem_size -= PANIC_LOG_SIZE
-    gicd, gicr, timebase = (QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu else (GICD, GICR, TIMEBASE)
+    gicd, gicr, timebase = ((QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu
+                             else (p['gicd'], p['gicr'], p['timebase']))
     seed = seed if seed is not None else os.urandom(64)
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
@@ -92,8 +132,8 @@ def build(seed=None, qemu=False, highmem=False):
         ('random-seed', seed),
         ('debug-enabled', u32(1)),
         ('embedded-panic-log-size', u32(PANIC_LOG_SIZE)),
-        ('firmware-version', cstr('sweet-shim')),
-        ('system-firmware-version', cstr('sweet-shim')),
+        ('firmware-version', cstr(p['firmware'])),
+        ('system-firmware-version', cstr(p['firmware'])),
         # iBoot's SHA-384 of the boot manifest; /sbin/mount -P 1 exits unless
         # it exists (bind mounts /private/preboot/<hex>/usr/standalone/firmware,
         # tolerating a missing directory). Fixed stand-in value.
@@ -111,7 +151,7 @@ def build(seed=None, qemu=False, highmem=False):
         # files), so e.g. DataMigration never records LastSystemVersion and
         # migrates on every boot. Synthetic ECID (not the phone's); chip-id
         # of the A11 that the iPhone X userland expects.
-        ('unique-chip-id', struct.pack('<Q', SWEET_ECID)),
+        ('unique-chip-id', struct.pack('<Q', p['ecid'])),
         ('chip-id', u32(0x8015)),
         # Security status as on a dev-fused, undemoted board (tuple 0,0,1,1):
         # MobileGestalt reads these from /chosen, and mobileactivationd's
@@ -138,7 +178,7 @@ def build(seed=None, qemu=False, highmem=False):
         cpu_nodes.append(node(f'cpu{core}', [
             ph(),
             ('device_type', cstr('cpu')),
-            ('compatible', cstr('qcom,kryo470') + cstr('ARM,v8')),
+            ('compatible', cstr(p['cpu_compat']) + cstr('ARM,v8')),
             ('reg', u32(core << 8)),  # actual MPIDR Aff1:Aff0, NOT logical ID
             ('cpu-id', u32(core)),   # descriptive: XNU assigns IDs by DT order
             ('cluster-id', u32(0)),  # descriptive; see ml_parse_cpu_topology
@@ -149,9 +189,9 @@ def build(seed=None, qemu=False, highmem=False):
             ('l3-cache-id', u32(0)),     # shared L3
             ('state', cstr('running' if core == 0 else 'stopped')),
             ('timebase-frequency', u32(timebase)),
-            ('clock-frequency', u32(2304000000 if core >= 6 else 1804800000)),
-            ('bus-frequency', u32(100000000)),
-            ('memory-frequency', u32(1866000000)),
+            ('clock-frequency', u32(p['cpu_clocks'][core])),
+            ('bus-frequency', u32(p['bus_frequency'])),
+            ('memory-frequency', u32(p['memory_frequency'])),
             ('peripheral-frequency', u32(timebase)),
             ('fixed-frequency', u32(timebase)),
         ]))
@@ -162,8 +202,8 @@ def build(seed=None, qemu=False, highmem=False):
         ph(),
         ('compatible', cstr('arm,gic-v3')),
         ('interrupt-controller', b''),
-        ('virtual-timer-intid', u32(QEMU_VTIMER_INTID if qemu else VTIMER_INTID)),
-        ('reg', u64(gicd - SOC_BASE, GICD_SIZE, gicr - SOC_BASE, GICR_SIZE)),
+        ('virtual-timer-intid', u32(QEMU_VTIMER_INTID if qemu else p['vtimer_intid'])),
+        ('reg', u64(gicd - SOC_BASE, p['gicd_size'], gicr - SOC_BASE, p['gicr_size'])),
     ])
     arm_io = node('arm-io', [
         ph(),
@@ -191,17 +231,17 @@ def build(seed=None, qemu=False, highmem=False):
 
     fbcon = node('sweet-fbcon', [
         ph(),
-        ('reg', u64(FB, FB_SIZE)),
-        ('width', u32(FB_W)),
-        ('height', u32(FB_H)),
-        ('stride', u32(FB_STRIDE)),
+        ('reg', u64(p['fb'], p['fb_size'])),
+        ('width', u32(p['fb_w'])),
+        ('height', u32(p['fb_h'])),
+        ('stride', u32(p['fb_stride'])),
     ])
 
     # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
     ufs = node('sweet-ufs', [
         ph(),
         ('compatible', cstr('qcom,ufshc')),
-        ('reg', u64(UFS, UFS_SIZE)),
+        ('reg', u64(p['ufs'], p['ufs_size'])),
     ])
 
     # pmap_compute_max_asids requires the node even when no overrides are set.
@@ -228,10 +268,10 @@ def build(seed=None, qemu=False, highmem=False):
 
     # Identity of the iPhone X whose userland runs here: compatible[0] is
     # hw.model/hw.target (D22AP), model is hw.machine/hw.product
-    # (iPhone10,3). 'xiaomi,sweet' stays for SweetPlatformExpert matching.
+    # (iPhone10,3). The hardware profile string remains for platform matching.
     return node('device-tree', [
         ph(),
-        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('qcom,sm7150') + cstr('AppleARM')),
+        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr(p['platform_compat']) + cstr(p['soc_compat']) + cstr('AppleARM')),
         ('model', cstr('iPhone10,3')),
         ('target-type', cstr('D22')),
         ('target-sub-type', cstr('D22AP')),
@@ -242,9 +282,18 @@ def build(seed=None, qemu=False, highmem=False):
 
 
 if __name__ == '__main__':
-    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output')
+    parser.add_argument('--device', choices=sorted(PROFILES), default='sweet')
+    parser.add_argument('--dump', action='store_true')
+    parser.add_argument('--qemu', action='store_true')
+    parser.add_argument('--highmem', action='store_true')
+    args = parser.parse_args()
+    if args.qemu and args.device != 'sweet':
+        parser.error('--qemu currently models only the sweet profile')
+    root = build(qemu=args.qemu, highmem=args.highmem, device=args.device)
     blob = adt.serialize(root)
-    open(sys.argv[1], 'wb').write(blob)
-    if '--dump' in sys.argv:
+    open(args.output, 'wb').write(blob)
+    if args.dump:
         adt.dump(adt.parse(blob)[0])
-    print(f'{sys.argv[1]}: {len(blob)} bytes', file=sys.stderr)
+    print(f'{args.output}: {len(blob)} bytes ({args.device})', file=sys.stderr)

@@ -160,7 +160,7 @@
 +void
 +sweet_keys_init(void)
 +{
-+	int enabled = 1;
++	int enabled = 0;
 +	thread_t thread;
 +	if (keys_started) {
 +		return;
@@ -766,7 +766,7 @@
 +void
 +sweet_touch_init(void)
 +{
-+	int enabled = 1;
++	int enabled = 0;
 +	thread_t thread;
 +	if (st.started) {
 +		return;

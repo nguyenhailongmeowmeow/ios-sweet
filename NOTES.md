@@ -1,3 +1,18 @@
+# LG G8 port handoff (2026-11-23)
+
+- Local branch `lg-g8-port` created from upstream commit `45263be`.
+- `tools/mkadt.py` now supports `--device lg-g8`; generated ADT was parsed and
+  checked locally (1440x3120 framebuffer at 0x9d200000, Kryo 485, SM8150
+  GIC/timer/UFS, conservative 1 GiB high-memory window).
+- XNU patch inputs now match `lge,alphaplus` / `qcom,kryo485`; early framebuffer
+  constants and the final alias offset are LG-specific.
+- Xiaomi keys/touch and Sweet USB MMIO probes default off. No phone flash was
+  performed. No LG kernel has been CI-built or boot-tested yet.
+- Next action: publish this branch to a writable fork, run the xnu workflow,
+  inspect the complete patch/build log, and only then construct a temporary
+  boot image for a non-destructive early-console test.
+- Detailed hardware/safety notes: `docs/LG_G8_PORT.md`.
+
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Agent handoff / active work (2026-10-15, latest)
